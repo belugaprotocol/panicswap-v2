@@ -146,7 +146,8 @@ contract BeetsProxyFarmer is Ownable {
             } catch {
                 BEETS_CHEF.emergencyWithdraw(_slot0.targetBeetsPoolId, address(this));
                 LP_TOKEN.safeTransfer(msg.sender, _amount);
-                _internalBalance.internalBalanceOf = uint112(nTokensDeposited - _amount);
+                _internalBalance.internalBalanceOf = uint112(_internalBalance.internalStake - _amount);
+                _internalBalance.internalStake = 0;
                 internalBalance = _internalBalance;
             }
         } else {
@@ -231,6 +232,21 @@ contract BeetsProxyFarmer is Ownable {
         // Deposit dummy token into Panicswap's MasterChef.
         DUMMY_TOKEN.approve(address(PANIC_CHEF), 1e18);
         PANIC_CHEF.deposit(_panicId, 1e18);
+    }
+
+    /// @notice Performs an emergency exit from BeethovenX.
+    function emergencyExitFromBeets() public onlyOwner {
+        InternalBalance memory _internalBalance = internalBalance;
+
+        // Withdraw from the chef.
+        BEETS_CHEF.emergencyWithdraw(slot0.targetBeetsPoolId, address(this));
+
+        // Update internal balances.
+        _internalBalance.internalBalanceOf = _internalBalance.internalStake;
+        _internalBalance.internalStake = 0;
+
+        // Update storage.
+        internalBalance = _internalBalance;
     }
 
     function _updateRewards(Slot0 memory _slot0) private view returns (Slot0 memory) {

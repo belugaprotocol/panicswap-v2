@@ -13,6 +13,10 @@ contract BeetsProxyFarmer is Ownable {
 
     constructor() {
         DUMMY_TOKEN = new TokenMintable();
+
+        // We can safely max approve BeethovenX's MasterChef as it has been
+        // audited and battle-tested. We will also never reach this max amount.
+        LP_TOKEN.safeApprove(address(BEETS_CHEF), type(uint256).max);
     }
 
     /// @notice Packed storage slot. Saves gas on read.
@@ -32,6 +36,12 @@ contract BeetsProxyFarmer is Ownable {
         // This also totals at 28 bytes, making this all readable in one 32 byte slot.
     }
 
+    /// @notice Internal balances for tracking LP tokens.
+    struct InternalBalance {
+        uint112 internalBalanceOf;
+        uint112 internalStake;
+    }
+
     /// @notice Dummy token used for farming PANIC.
     TokenMintable public immutable DUMMY_TOKEN;
 
@@ -49,6 +59,9 @@ contract BeetsProxyFarmer is Ownable {
 
     /// @notice Storage slot #0. Multiple values packed into one.
     Slot0 public slot0;
+
+    /// @notice Storage slot for tracking farm info.
+    InternalBalance public internalBalance;
 
     /// @notice Internal tracking for deposited tokens.
     uint256 public nTokensDeposited;
@@ -85,8 +98,10 @@ contract BeetsProxyFarmer is Ownable {
         userSlot[msg.sender] = _userSlot;
         nTokensDeposited += _amount;
 
-        // Transfer tokens in.
+        // Transfer tokens in and stake into BeethovenX.
         LP_TOKEN.safeTransferFrom(msg.sender, address(this), _amount);
+        BEETS_CHEF.deposit(_slot0.targetBeetsPoolId, _amount, address(this));
+        internalBalance.internalStake += uint112(_amount);
         emit Deposit(msg.sender, _amount);
     }
 
@@ -112,7 +127,21 @@ contract BeetsProxyFarmer is Ownable {
         nTokensDeposited -= uint112(_amount);
 
         // Transfer tokens out.
-        LP_TOKEN.safeTransfer(msg.sender, _amount);
+        InternalBalance memory _internalBalance = internalBalance;
+        if(_amount > _internalBalance.internalBalanceOf) {
+            try BEETS_CHEF.withdrawAndHarvest(_slot0.targetBeetsPoolId, _amount, address(this)) {
+                LP_TOKEN.safeTransfer(msg.sender, _amount);
+                _internalBalance.internalStake -= uint112(_amount);
+                internalBalance = _internalBalance;
+            } catch {
+                BEETS_CHEF.emergencyWithdraw(_slot0.targetBeetsPoolId, address(this));
+                LP_TOKEN.safeTransfer(msg.sender, _amount);
+                _internalBalance.internalBalanceOf = uint112(nTokensDeposited - _amount);
+                internalBalance = _internalBalance;
+            }
+        } else {
+            LP_TOKEN.safeTransfer(msg.sender, _amount);
+        }
         emit Withdrawal(msg.sender, _amount);
     }
 
@@ -131,7 +160,7 @@ contract BeetsProxyFarmer is Ownable {
         _slot0.targetBeetsPoolId = _beetsId;
         _slot0.tLastRewardUpdate = uint32(block.timestamp);
         IPanicChef.PoolInfo memory _info = PANIC_CHEF.poolInfo(_panicId);
-        _slot0.panicRate = uint64((PANIC_CHEF.rewardsPerSecond() * (_info.allocPoint)) / PANIC_CHEF.totalAllocPoint());
+        _slot0.panicRate = uint64(((PANIC_CHEF.rewardsPerSecond() * (_info.allocPoint)) / PANIC_CHEF.totalAllocPoint()) / 2);
 
         // Push memory version of Slot0 to storage.
         slot0 = _slot0;

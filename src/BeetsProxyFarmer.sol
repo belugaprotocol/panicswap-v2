@@ -22,12 +22,13 @@ contract BeetsProxyFarmer is Ownable {
 
     /// @notice Packed storage slot. Saves gas on read.
     struct Slot0 {
+        bool rewardsActive;     // Whether or not rewards are active on the farmer.
         uint8 targetPoolId;     // Target pool ID to stake the dummy token into.
         uint8 targetBeetsPoolId;    // Target BeethovenX pool ID to stake into.
         uint32 tLastRewardUpdate;   // Time of the last PANIC reward update on the farm.
         uint64 panicRate;           // Amount of PANIC distributed per second.
         uint112 panicPerShare;      // Amount of PANIC rewards per share in the farm.
-        // This totals at 28 bytes, allowing this to all be packed into one 32 byte storage slot. Significant gas savings.
+        // This totals at 29 bytes, allowing this to all be packed into one 32 byte storage slot. Significant gas savings.
     }
 
     /// @notice User info. Packed into one storage slot.
@@ -186,6 +187,26 @@ contract BeetsProxyFarmer is Ownable {
         PANIC_MINTER.exit();
     }
 
+    /// @notice Updates the PANIC reward rate.
+    function updatePanicRate() public {
+        Slot0 memory _slot0 = slot0;
+
+        // Update rewards.
+        _slot0 = _updateRewards(_slot0);
+
+        // Recalculate the rate.
+        IPanicChef.PoolInfo memory _info = PANIC_CHEF.poolInfo(_slot0.targetPoolId);
+        if(_info.allocPoint == 0) {
+            _slot0.rewardsActive = false;
+            _slot0.panicRate = 0;
+        } else {
+            _slot0.panicRate = uint64(((PANIC_CHEF.rewardsPerSecond() * (_info.allocPoint)) / PANIC_CHEF.totalAllocPoint()) / 2);
+        }
+
+        // Write to slot0.
+        slot0 = _slot0;
+    }
+
     /// @notice Sets the farming pool IDs and begins emissions.
     /// @param _panicId Panicswap pool ID to deposit into.
     /// @param _beetsId BeethovenX pool ID to deposit into.
@@ -197,6 +218,7 @@ contract BeetsProxyFarmer is Ownable {
         require(_slot0.targetPoolId == 0 && _slot0.targetBeetsPoolId == 0, "IDs already set");
         
         // Create all writes in memory.
+        _slot0.rewardsActive = true;
         _slot0.targetPoolId = _panicId;
         _slot0.targetBeetsPoolId = _beetsId;
         _slot0.tLastRewardUpdate = uint32(block.timestamp);
@@ -213,7 +235,7 @@ contract BeetsProxyFarmer is Ownable {
 
     function _updateRewards(Slot0 memory _slot0) private view returns (Slot0 memory) {
         uint256 _nTokensDeposited = nTokensDeposited;
-        if(block.timestamp <= _slot0.tLastRewardUpdate) {
+        if(block.timestamp <= _slot0.tLastRewardUpdate || _slot0.rewardsActive == false) {
             return _slot0;
         }
 

@@ -3,11 +3,17 @@ pragma solidity 0.8.13;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {IPanicChef} from "./interfaces/IPanicChef.sol";
+import {IBeetsChef} from "./interfaces/IBeetsChef.sol";
 import {SafeTransferLib} from "./lib/SafeTransferLib.sol";
 import {TokenMintable} from "./TokenMintable.sol";
 
 contract BeetsProxyFarmer is Ownable {
     using SafeTransferLib for IERC20;
+
+    constructor() {
+        DUMMY_TOKEN = new TokenMintable();
+    }
 
     /// @notice Packed storage slot. Saves gas on read.
     struct Slot0 {
@@ -26,14 +32,23 @@ contract BeetsProxyFarmer is Ownable {
         // This also totals at 28 bytes, making this all readable in one 32 byte slot.
     }
 
-    /// @notice Storage slot #0. Multiple values packed into one.
-    Slot0 public slot0;
+    /// @notice Dummy token used for farming PANIC.
+    TokenMintable public immutable DUMMY_TOKEN;
 
     /// @notice LP token to deposit into the contract.
-    IERC20 public lpToken;
+    IERC20 public constant LP_TOKEN = IERC20(0x1E2576344D49779BdBb71b1B76193d27e6F996b7);
 
     /// @notice PANIC token contract.
-    IERC20 public panic;
+    IERC20 public constant PANIC = IERC20(0xA882CeAC81B22FC2bEF8E1A82e823e3E9603310B);
+
+    /// @notice Panicswap MasterChef contract.
+    IPanicChef public constant PANIC_CHEF = IPanicChef(0xC02563f20Ba3e91E459299C3AC1f70724272D618);
+
+    /// @notice BeethovenX MasterChef contract.
+    IBeetsChef public constant BEETS_CHEF = IBeetsChef(0x8166994d9ebBe5829EC86Bd81258149B87faCfd3);
+
+    /// @notice Storage slot #0. Multiple values packed into one.
+    Slot0 public slot0;
 
     /// @notice Internal tracking for deposited tokens.
     uint256 public nTokensDeposited;
@@ -49,7 +64,7 @@ contract BeetsProxyFarmer is Ownable {
 
     /// @notice Deposits tokens into the farmer.
     /// @param _amount Amount of tokens to deposit.
-    function deposit(uint256 _amount) public {
+    function deposit(uint256 _amount) external {
         Slot0 memory _slot0 = slot0;
         UserSlot memory _userSlot = userSlot[msg.sender];
 
@@ -60,7 +75,7 @@ contract BeetsProxyFarmer is Ownable {
         uint112 newDebt;
         if(_userSlot.stakedAmount > 0) {
             newDebt = uint112((_userSlot.stakedAmount * _slot0.panicPerShare) / 1e12);
-            panic.safeTransfer(msg.sender, newDebt - _userSlot.rewardDebt);
+            PANIC.safeTransfer(msg.sender, newDebt - _userSlot.rewardDebt);
         }
 
         // Update amounts and overwrite slots.
@@ -71,13 +86,13 @@ contract BeetsProxyFarmer is Ownable {
         nTokensDeposited += _amount;
 
         // Transfer tokens in.
-        lpToken.safeTransferFrom(msg.sender, address(this), _amount);
+        LP_TOKEN.safeTransferFrom(msg.sender, address(this), _amount);
         emit Deposit(msg.sender, _amount);
     }
 
     /// @notice Withdraws tokens from the farmer.
     /// @param _amount Amount of tokens to withdraw.
-    function withdraw(uint256 _amount) public {
+    function withdraw(uint256 _amount) external {
         Slot0 memory _slot0 = slot0;
         UserSlot memory _userSlot = userSlot[msg.sender];
         require(_userSlot.stakedAmount >= _amount, "Cannot withdraw over stake");
@@ -87,7 +102,7 @@ contract BeetsProxyFarmer is Ownable {
 
         // Claim any pending PANIC.
         uint112 newDebt = uint112((_userSlot.stakedAmount * _slot0.panicPerShare) / 1e12);
-        panic.safeTransfer(msg.sender, newDebt - _userSlot.rewardDebt);
+        PANIC.safeTransfer(msg.sender, newDebt - _userSlot.rewardDebt);
 
         // Update amounts and overwrite slots.
         _userSlot.stakedAmount -= uint112(_amount);
@@ -97,8 +112,33 @@ contract BeetsProxyFarmer is Ownable {
         nTokensDeposited -= uint112(_amount);
 
         // Transfer tokens out.
-        lpToken.safeTransfer(msg.sender, _amount);
+        LP_TOKEN.safeTransfer(msg.sender, _amount);
         emit Withdrawal(msg.sender, _amount);
+    }
+
+    /// @notice Sets the farming pool IDs and begins emissions.
+    /// @param _panicId Panicswap pool ID to deposit into.
+    /// @param _beetsId BeethovenX pool ID to deposit into.
+    function setPoolIDsAndEmit(
+        uint8 _panicId,
+        uint8 _beetsId
+    ) public onlyOwner {
+        Slot0 memory _slot0 = slot0;
+        require(_slot0.targetPoolId == 0 && _slot0.targetBeetsPoolId == 0, "IDs already set");
+        
+        // Create all writes in memory.
+        _slot0.targetPoolId = _panicId;
+        _slot0.targetBeetsPoolId = _beetsId;
+        _slot0.tLastRewardUpdate = uint32(block.timestamp);
+        IPanicChef.PoolInfo memory _info = PANIC_CHEF.poolInfo(_panicId);
+        _slot0.panicRate = uint64((PANIC_CHEF.rewardsPerSecond() * (_info.allocPoint)) / PANIC_CHEF.totalAllocPoint());
+
+        // Push memory version of Slot0 to storage.
+        slot0 = _slot0;
+
+        // Deposit dummy token into Panicswap's MasterChef.
+        DUMMY_TOKEN.approve(address(PANIC_CHEF), 1e18);
+        PANIC_CHEF.deposit(_panicId, 1e18);
     }
 
     function updateRewards(Slot0 memory _slot0) private view returns (Slot0 memory) {

@@ -154,6 +154,24 @@ contract BeetsProxyFarmer is Ownable {
         emit Withdrawal(msg.sender, _amount);
     }
 
+    /// @notice Claims PANIC tokens from the farm.
+    function claim() external {
+        panicHarvest();
+        Slot0 memory _slot0 = slot0;
+        UserSlot memory _userSlot = userSlot[msg.sender];
+
+        // A user wouldn't have claimable rewards if they exited.
+        uint112 newDebt;
+        if(_userSlot.stakedAmount > 0) {
+            newDebt = uint112((_userSlot.stakedAmount * _slot0.panicPerShare) / 1e12);
+            PANIC.safeTransfer(msg.sender, newDebt = _userSlot.rewardDebt);
+        }
+
+        // Update stored values.
+        _userSlot.rewardDebt += newDebt;
+        userSlot[msg.sender] = _userSlot;
+    }
+
     /// @notice Harvests BEETS tokens from BeethovenX.
     function harvestBeets() external {
         BEETS_CHEF.harvest(slot0.targetBeetsPoolId, address(this));

@@ -4,6 +4,7 @@ pragma solidity 0.8.13;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IPanicChef} from "./interfaces/IPanicChef.sol";
+import {IPanicMinter} from "./interfaces/IPanicMinter.sol";
 import {IBeetsChef} from "./interfaces/IBeetsChef.sol";
 import {SafeTransferLib} from "./lib/SafeTransferLib.sol";
 import {TokenMintable} from "./TokenMintable.sol";
@@ -51,8 +52,14 @@ contract BeetsProxyFarmer is Ownable {
     /// @notice PANIC token contract.
     IERC20 public constant PANIC = IERC20(0xA882CeAC81B22FC2bEF8E1A82e823e3E9603310B);
 
+    /// @notice BEETS token contract.
+    IERC20 public constant BEETS = IERC20(0xF24Bcf4d1e507740041C9cFd2DddB29585aDCe1e);
+
     /// @notice Panicswap MasterChef contract.
     IPanicChef public constant PANIC_CHEF = IPanicChef(0xC02563f20Ba3e91E459299C3AC1f70724272D618);
+
+    /// @notice Panicswap PANIC minter contract.
+    IPanicMinter public constant PANIC_MINTER = IPanicMinter(0x536b88CC4Aa42450aaB021738bf22D63DDC7303e);
 
     /// @notice BeethovenX MasterChef contract.
     IBeetsChef public constant BEETS_CHEF = IBeetsChef(0x8166994d9ebBe5829EC86Bd81258149B87faCfd3);
@@ -82,11 +89,12 @@ contract BeetsProxyFarmer is Ownable {
         UserSlot memory _userSlot = userSlot[msg.sender];
 
         // Update reward variables.
-        _slot0 = updateRewards(_slot0);
+        _slot0 = _updateRewards(_slot0);
 
         // Claim any pending PANIC.
         uint112 newDebt;
         if(_userSlot.stakedAmount > 0) {
+            panicHarvest(); // To save gas for the user, we only do this if they *potentially* have rewards.
             newDebt = uint112((_userSlot.stakedAmount * _slot0.panicPerShare) / 1e12);
             PANIC.safeTransfer(msg.sender, newDebt - _userSlot.rewardDebt);
         }
@@ -113,9 +121,10 @@ contract BeetsProxyFarmer is Ownable {
         require(_userSlot.stakedAmount >= _amount, "Cannot withdraw over stake");
 
         // Update reward variables.
-        _slot0 = updateRewards(_slot0);
+        _slot0 = _updateRewards(_slot0);
 
         // Claim any pending PANIC.
+        panicHarvest();
         uint112 newDebt = uint112((_userSlot.stakedAmount * _slot0.panicPerShare) / 1e12);
         PANIC.safeTransfer(msg.sender, newDebt - _userSlot.rewardDebt);
 
@@ -145,6 +154,20 @@ contract BeetsProxyFarmer is Ownable {
         emit Withdrawal(msg.sender, _amount);
     }
 
+    /// @notice Harvests BEETS tokens from BeethovenX.
+    function harvestBeets() external {
+        BEETS_CHEF.harvest(slot0.targetBeetsPoolId, address(this));
+        BEETS.safeTransfer(owner(), BEETS.balanceOf(address(this)));
+    }
+
+    /// @notice Harvests PANIC tokens from Panicswap's MasterChef.
+    function panicHarvest() public {
+        uint256[] memory _pids = new uint256[](1);
+        _pids[0] = slot0.targetPoolId;
+        PANIC_CHEF.claim(_pids);
+        PANIC_MINTER.exit();
+    }
+
     /// @notice Sets the farming pool IDs and begins emissions.
     /// @param _panicId Panicswap pool ID to deposit into.
     /// @param _beetsId BeethovenX pool ID to deposit into.
@@ -170,7 +193,7 @@ contract BeetsProxyFarmer is Ownable {
         PANIC_CHEF.deposit(_panicId, 1e18);
     }
 
-    function updateRewards(Slot0 memory _slot0) private view returns (Slot0 memory) {
+    function _updateRewards(Slot0 memory _slot0) private view returns (Slot0 memory) {
         uint256 _nTokensDeposited = nTokensDeposited;
         if(block.timestamp <= _slot0.tLastRewardUpdate) {
             return _slot0;

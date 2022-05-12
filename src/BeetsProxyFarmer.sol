@@ -24,11 +24,10 @@ contract BeetsProxyFarmer is Ownable {
     struct Slot0 {
         bool rewardsActive;     // Whether or not rewards are active on the farmer.
         uint8 targetPoolId;     // Target pool ID to stake the dummy token into.
-        uint8 targetBeetsPoolId;    // Target BeethovenX pool ID to stake into.
         uint32 tLastRewardUpdate;   // Time of the last PANIC reward update on the farm.
         uint64 panicRate;           // Amount of PANIC distributed per second.
         uint112 panicPerShare;      // Amount of PANIC rewards per share in the farm.
-        // This totals at 29 bytes, allowing this to all be packed into one 32 byte storage slot. Significant gas savings.
+        // This totals at 28 bytes, allowing this to all be packed into one 32 byte storage slot. Significant gas savings.
     }
 
     /// @notice User info. Packed into one storage slot.
@@ -40,8 +39,8 @@ contract BeetsProxyFarmer is Ownable {
 
     /// @notice Internal balances for tracking LP tokens.
     struct InternalBalance {
-        uint112 internalBalanceOf;
-        uint112 internalStake;
+        uint112 internalBalanceOf;  // LP token `balanceOf`, tracked internally to save gas.
+        uint112 internalStake;      // Beets MasterChef stake, tracked internally to save gas.
     }
 
     /// @notice Dummy token used for farming PANIC.
@@ -64,6 +63,9 @@ contract BeetsProxyFarmer is Ownable {
 
     /// @notice BeethovenX MasterChef contract.
     IBeetsChef public constant BEETS_CHEF = IBeetsChef(0x8166994d9ebBe5829EC86Bd81258149B87faCfd3);
+
+    /// @notice BeethovenX MasterChef pool ID for staking LP tokens.
+    uint256 public constant BEETS_POOL_ID = 71;
 
     /// @notice Storage slot #0. Multiple values packed into one.
     Slot0 public slot0;
@@ -109,7 +111,7 @@ contract BeetsProxyFarmer is Ownable {
 
         // Transfer tokens in and stake into BeethovenX.
         LP_TOKEN.safeTransferFrom(msg.sender, address(this), _amount);
-        BEETS_CHEF.deposit(_slot0.targetBeetsPoolId, _amount, address(this));
+        BEETS_CHEF.deposit(BEETS_POOL_ID, _amount, address(this));
         internalBalance.internalStake += uint112(_amount);
         emit Deposit(msg.sender, _amount);
     }
@@ -139,12 +141,12 @@ contract BeetsProxyFarmer is Ownable {
         // Transfer tokens out.
         InternalBalance memory _internalBalance = internalBalance;
         if(_amount > _internalBalance.internalBalanceOf) {
-            try BEETS_CHEF.withdrawAndHarvest(_slot0.targetBeetsPoolId, _amount, address(this)) {
+            try BEETS_CHEF.withdrawAndHarvest(BEETS_POOL_ID, _amount, address(this)) {
                 LP_TOKEN.safeTransfer(msg.sender, _amount);
                 _internalBalance.internalStake -= uint112(_amount);
                 internalBalance = _internalBalance;
             } catch {
-                BEETS_CHEF.emergencyWithdraw(_slot0.targetBeetsPoolId, address(this));
+                BEETS_CHEF.emergencyWithdraw(BEETS_POOL_ID, address(this));
                 LP_TOKEN.safeTransfer(msg.sender, _amount);
                 _internalBalance.internalBalanceOf = uint112(_internalBalance.internalStake - _amount);
                 _internalBalance.internalStake = 0;
@@ -176,7 +178,7 @@ contract BeetsProxyFarmer is Ownable {
 
     /// @notice Harvests BEETS tokens from BeethovenX.
     function harvestBeets() external {
-        BEETS_CHEF.harvest(slot0.targetBeetsPoolId, address(this));
+        BEETS_CHEF.harvest(BEETS_POOL_ID, address(this));
         BEETS.safeTransfer(owner(), BEETS.balanceOf(address(this)));
     }
 
@@ -216,12 +218,11 @@ contract BeetsProxyFarmer is Ownable {
         uint8 _beetsId
     ) public onlyOwner {
         Slot0 memory _slot0 = slot0;
-        require(_slot0.targetPoolId == 0 && _slot0.targetBeetsPoolId == 0, "IDs already set");
+        require(_slot0.targetPoolId == 0, "ID already set");
         
         // Create all writes in memory.
         _slot0.rewardsActive = true;
         _slot0.targetPoolId = _panicId;
-        _slot0.targetBeetsPoolId = _beetsId;
         _slot0.tLastRewardUpdate = uint32(block.timestamp);
         IPanicChef.PoolInfo memory _info = PANIC_CHEF.poolInfo(_panicId);
         _slot0.panicRate = uint64(((PANIC_CHEF.rewardsPerSecond() * (_info.allocPoint)) / PANIC_CHEF.totalAllocPoint()) / 2);
@@ -239,7 +240,7 @@ contract BeetsProxyFarmer is Ownable {
         InternalBalance memory _internalBalance = internalBalance;
 
         // Withdraw from the chef.
-        BEETS_CHEF.emergencyWithdraw(slot0.targetBeetsPoolId, address(this));
+        BEETS_CHEF.emergencyWithdraw(BEETS_POOL_ID, address(this));
 
         // Update internal balances.
         _internalBalance.internalBalanceOf = _internalBalance.internalStake;

@@ -9,6 +9,10 @@ import {IBeetsChef} from "./interfaces/IBeetsChef.sol";
 import {SafeTransferLib} from "./lib/SafeTransferLib.sol";
 import {TokenMintable} from "./TokenMintable.sol";
 
+/// @title BeethovenX Proxy Farmer
+/// @author Chainvisions
+/// @notice Panicswap proxy farmer that farms BEETS for the protocol.
+
 contract BeetsProxyFarmer is Ownable {
     using SafeTransferLib for IERC20;
 
@@ -295,6 +299,14 @@ contract BeetsProxyFarmer is Ownable {
 
         // Update storage.
         internalBalance = _internalBalance;
+    }
+
+    /// @notice Claims stuck tokens in the contract.
+    /// @param _token Token to transfer out. Cannot be LPs or PANIC.
+    /// @param _amount Amount of tokens to transfer to the owner.
+    function claimStuckTokens(IERC20 _token, uint256 _amount) public onlyOwner {
+        require(_token != LP_TOKEN && _token != PANIC, "Cannot be PANIC or LP");
+        _token.safeTransfer(owner(), _amount);
     }
 
     function _updateRewards(Slot0 memory _slot0) private view returns (Slot0 memory) {

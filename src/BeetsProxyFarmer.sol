@@ -92,7 +92,7 @@ contract BeetsProxyFarmer is Ownable {
         UserSlot memory _userSlot = userSlot[msg.sender];
 
         // Update reward variables.
-        _slot0 = _updateRewards(_slot0);
+        _slot0 = _updatePanic(_slot0);
 
         // Claim any pending PANIC.
         uint112 newDebt;
@@ -127,7 +127,7 @@ contract BeetsProxyFarmer is Ownable {
         require(_userSlot.stakedAmount >= _amount, "Cannot withdraw over stake");
 
         // Update reward variables.
-        _slot0 = _updateRewards(_slot0);
+        _slot0 = _updatePanic(_slot0);
 
         // Claim any pending PANIC.
         panicHarvest();
@@ -196,7 +196,7 @@ contract BeetsProxyFarmer is Ownable {
         UserSlot memory _userSlot = userSlot[msg.sender];
 
         // Update reward variables.
-        _slot0 = _updateRewards(_slot0);
+        _slot0 = _updatePanic(_slot0);
 
         // A user wouldn't have claimable rewards if they exited.
         uint112 newDebt;
@@ -228,7 +228,7 @@ contract BeetsProxyFarmer is Ownable {
         UserSlot memory _userSlot = userSlot[_user];
 
         // Use the latest panicPerShare.
-        _slot0 = _updateRewards(_slot0);
+        _slot0 = _updatePanic(_slot0);
 
         // Calculate pending rewards.
         return ((_userSlot.stakedAmount * _slot0.panicPerShare) / 1e12) - _userSlot.rewardDebt;
@@ -256,22 +256,7 @@ contract BeetsProxyFarmer is Ownable {
 
     /// @notice Updates the PANIC reward rate.
     function updatePanicRate() public {
-        Slot0 memory _slot0 = slot0;
-
-        // Update rewards.
-        _slot0 = _updateRewards(_slot0);
-
-        // Recalculate the rate.
-        IPanicChef.PoolInfo memory _info = PANIC_CHEF.poolInfo(_slot0.targetPoolId);
-        if(_info.allocPoint == 0) {
-            _slot0.rewardsActive = false;
-            _slot0.panicRate = 0;
-        } else {
-            _slot0.panicRate = uint64(((PANIC_CHEF.rewardsPerSecond() * (_info.allocPoint)) / PANIC_CHEF.totalAllocPoint()) / 2);
-        }
-
-        // Write to slot0.
-        slot0 = _slot0;
+        slot0 = _updatePanic(slot0);
     }
 
     /// @notice Sets the farming pool IDs and begins emissions.
@@ -329,6 +314,23 @@ contract BeetsProxyFarmer is Ownable {
         _slot0.tLastRewardUpdate = uint32(block.timestamp);
 
         // Return new slot.
+        return _slot0;
+    }
+
+    function _updatePanic(Slot0 memory _slot0) private view returns (Slot0 memory) {
+        // Update rewards.
+        _slot0 = _updateRewards(_slot0);
+
+        // Recalculate the rate.
+        IPanicChef.PoolInfo memory _info = PANIC_CHEF.poolInfo(_slot0.targetPoolId);
+        if(_info.allocPoint == 0) {
+            _slot0.rewardsActive = false;
+            _slot0.panicRate = 0;
+        } else {
+            _slot0.panicRate = uint64(((PANIC_CHEF.rewardsPerSecond() * (_info.allocPoint)) / PANIC_CHEF.totalAllocPoint()) / 2);
+        }
+
+        // Return new slot0.
         return _slot0;
     }
 }

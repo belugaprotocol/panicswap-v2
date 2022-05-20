@@ -105,6 +105,9 @@ contract BeetsProxyFarmer is Ownable {
         // Update amounts and overwrite slots.
         _userSlot.stakedAmount = uint112(_amount);
         _userSlot.rewardDebt = newDebt;
+
+        delete slot0;
+
         slot0 = _slot0;
         userSlot[msg.sender] = _userSlot;
         nTokensDeposited += _amount;
@@ -134,6 +137,9 @@ contract BeetsProxyFarmer is Ownable {
         // Update amounts and overwrite slots.
         _userSlot.stakedAmount -= uint112(_amount);
         _userSlot.rewardDebt = newDebt;
+
+        delete slot0;
+
         slot0 = _slot0;
         userSlot[msg.sender] = _userSlot;
         nTokensDeposited -= uint112(_amount);
@@ -160,13 +166,9 @@ contract BeetsProxyFarmer is Ownable {
 
     /// @notice Performs an emergency withdrawal from the farm.
     function emergencyWithdraw() external {
-        UserSlot memory _userSlot = userSlot[msg.sender];
-
         // Update state.
-        uint256 stake = _userSlot.stakedAmount;
-        _userSlot.stakedAmount = 0;
-        _userSlot.rewardDebt = 0;
-        userSlot[msg.sender] = _userSlot;
+        uint256 stake = userSlot[msg.sender].stakedAmount;
+        delete userSlot[msg.sender];
 
         // Send tokens
         InternalBalance memory _internalBalance = internalBalance;
@@ -204,7 +206,10 @@ contract BeetsProxyFarmer is Ownable {
         }
 
         // Update stored values.
-        _userSlot.rewardDebt = newDebt;        
+        _userSlot.rewardDebt = newDebt;  
+
+        delete slot0;
+
         slot0 = _slot0;
         userSlot[msg.sender] = _userSlot;
     }

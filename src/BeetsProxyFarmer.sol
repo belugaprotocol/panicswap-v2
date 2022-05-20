@@ -104,7 +104,7 @@ contract BeetsProxyFarmer is Ownable {
 
         // Update amounts and overwrite slots.
         _userSlot.stakedAmount = uint112(_amount);
-        _userSlot.rewardDebt += newDebt;
+        _userSlot.rewardDebt = newDebt;
         slot0 = _slot0;
         userSlot[msg.sender] = _userSlot;
         nTokensDeposited += _amount;
@@ -133,7 +133,7 @@ contract BeetsProxyFarmer is Ownable {
 
         // Update amounts and overwrite slots.
         _userSlot.stakedAmount -= uint112(_amount);
-        _userSlot.rewardDebt += newDebt;
+        _userSlot.rewardDebt = newDebt;
         slot0 = _slot0;
         userSlot[msg.sender] = _userSlot;
         nTokensDeposited -= uint112(_amount);
@@ -158,21 +158,54 @@ contract BeetsProxyFarmer is Ownable {
         emit Withdrawal(msg.sender, _amount);
     }
 
+    /// @notice Performs an emergency withdrawal from the farm.
+    function emergencyWithdraw() external {
+        UserSlot memory _userSlot = userSlot[msg.sender];
+
+        // Update state.
+        uint256 stake = _userSlot.stakedAmount;
+        _userSlot.stakedAmount = 0;
+        _userSlot.rewardDebt = 0;
+        userSlot[msg.sender] = _userSlot;
+
+        // Send tokens
+        InternalBalance memory _internalBalance = internalBalance;
+        if(stake > _internalBalance.internalBalanceOf) {
+            try BEETS_CHEF.withdrawAndHarvest(BEETS_POOL_ID, stake, address(this)) {
+                LP_TOKEN.safeTransfer(msg.sender, stake);
+                _internalBalance.internalStake -= uint112(stake);
+                internalBalance = _internalBalance;
+            } catch {
+                BEETS_CHEF.emergencyWithdraw(BEETS_POOL_ID, address(this));
+                LP_TOKEN.safeTransfer(msg.sender, stake);
+                _internalBalance.internalBalanceOf = uint112(_internalBalance.internalStake - stake);
+                _internalBalance.internalStake = 0;
+                internalBalance = _internalBalance;
+            }
+        } else {
+            LP_TOKEN.safeTransfer(msg.sender, stake);
+        }
+    }
+
     /// @notice Claims PANIC tokens from the farm.
     function claim() external {
         panicHarvest();
         Slot0 memory _slot0 = slot0;
         UserSlot memory _userSlot = userSlot[msg.sender];
 
+        // Update reward variables.
+        _slot0 = _updateRewards(_slot0);
+
         // A user wouldn't have claimable rewards if they exited.
         uint112 newDebt;
         if(_userSlot.stakedAmount > 0) {
             newDebt = uint112((_userSlot.stakedAmount * _slot0.panicPerShare) / 1e12);
-            PANIC.safeTransfer(msg.sender, newDebt = _userSlot.rewardDebt);
+            PANIC.safeTransfer(msg.sender, newDebt - _userSlot.rewardDebt);
         }
 
         // Update stored values.
-        _userSlot.rewardDebt += newDebt;
+        _userSlot.rewardDebt = newDebt;        
+        slot0 = _slot0;
         userSlot[msg.sender] = _userSlot;
     }
 
@@ -180,6 +213,32 @@ contract BeetsProxyFarmer is Ownable {
     function harvestBeets() external {
         BEETS_CHEF.harvest(BEETS_POOL_ID, address(this));
         BEETS.safeTransfer(owner(), BEETS.balanceOf(address(this)));
+    }
+
+    /// @notice Calculates the amount of pending PANIC a user has.
+    /// @param _user User to calculate the pending rewards of.
+    /// @return Pending PANIC tokens claimable for `_user`.
+    function pendingPanic(address _user) external view returns (uint256) {
+        Slot0 memory _slot0 = slot0;
+        UserSlot memory _userSlot = userSlot[_user];
+
+        // Use the latest panicPerShare.
+        _slot0 = _updateRewards(_slot0);
+
+        // Calculate pending rewards.
+        return ((_userSlot.stakedAmount * _slot0.panicPerShare) / 1e12) - _userSlot.rewardDebt;
+    }
+
+    /// @notice Returns the amount of PANIC distributed per second.
+    /// @return The amount of PANIC distributed per second by the farm.
+    function panicRate() external view returns (uint256) {
+        return slot0.panicRate;
+    }
+
+    /// @notice Returns the dummy token of the proxy farmer.
+    /// @return Proxy farmer dummy token.
+    function dummyToken() external view returns (IERC20) {
+        return DUMMY_TOKEN;
     }
 
     /// @notice Harvests PANIC tokens from Panicswap's MasterChef.
@@ -212,10 +271,8 @@ contract BeetsProxyFarmer is Ownable {
 
     /// @notice Sets the farming pool IDs and begins emissions.
     /// @param _panicId Panicswap pool ID to deposit into.
-    /// @param _beetsId BeethovenX pool ID to deposit into.
     function setPoolIDsAndEmit(
-        uint8 _panicId,
-        uint8 _beetsId
+        uint8 _panicId
     ) public onlyOwner {
         Slot0 memory _slot0 = slot0;
         require(_slot0.targetPoolId == 0, "ID already set");

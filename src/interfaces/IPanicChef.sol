@@ -14,6 +14,7 @@ interface IPanicChef {
     function deposit(uint256, uint256) external;
     function withdraw(uint256, uint256) external;
     function claim(uint256[] memory) external;
+    function addPool(address, uint256, bool) external;
     function rewardsPerSecond() external view returns (uint256);
     function poolInfo(uint256) external view returns (PoolInfo memory);
     function totalAllocPoint() external view returns (uint256);

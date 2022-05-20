@@ -1,0 +1,7 @@
+BeetsProxyFarmerTest:testDepositShouldSucceed() (gas: 225314)
+BeetsProxyFarmerTest:testEmergencyWithdraw() (gas: 247576)
+BeetsProxyFarmerTest:testRateShouldBeAccurate() (gas: 8812)
+BeetsProxyFarmerTest:testShouldNotDoubleDip() (gas: 748540)
+BeetsProxyFarmerTest:testWarpExactRewards() (gas: 596166)
+BeetsProxyFarmerTest:testWithdrawShouldFailAboveStake() (gas: 225899)
+BeetsProxyFarmerTest:testWithdrawShouldSucceed() (gas: 626405)
